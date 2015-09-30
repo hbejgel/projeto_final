@@ -1,0 +1,4 @@
+Jogos,Política,Peças,Seed
+50,aleatoria,-1,200
+50,menor_altura,-1,200
+50,quadratica,-1,200

@@ -1,13 +1,10 @@
-package main
+package tetris
 
 import (
 	"fmt"
 	"github.com/mohae/deepcopy"
+	"math"
 	"math/rand"
-	"os"
-	"strconv"
-	"strings"
-	//"time"
 )
 
 type Coordinate struct{ x, y int }
@@ -20,8 +17,12 @@ type Playfield struct {
 	width  int
 	height int
 	// Vetor representando o tabuleiro
-	field []int
+	field     []int
+	ClusterId string
 }
+
+const StandardWidth int = 10
+const StandardHeight int = 20
 
 /************************************
 Square Tetromino
@@ -143,8 +144,8 @@ var Tetrominos = []Tetromino{
 func NewPlayfield(width, height int) Playfield {
 	var p Playfield
 	p.width = width
-	p.height = height
-	p.field = make([]int, width*height)
+	p.height = height + 4
+	p.field = make([]int, p.width*p.height)
 	return p
 }
 
@@ -165,7 +166,7 @@ func (p *Playfield) at(x, y int) int {
 	return p.field[x+y*p.width]
 }
 
-// Checa se uma linha esta completa
+// Checa se uma linha está completa
 func (p *Playfield) isLineComplete(y int) bool {
 	for i := 0; i < p.width; i++ {
 		if p.at(i, y) == 0 {
@@ -175,7 +176,7 @@ func (p *Playfield) isLineComplete(y int) bool {
 	return true
 }
 
-// Checa se uma linha possui uma peça
+// Checa se uma linha está ocupada por alguma peça
 func (p *Playfield) isLineOccupied(y int) bool {
 	for i := 0; i < p.width; i++ {
 		if p.at(i, y) != 0 {
@@ -186,7 +187,7 @@ func (p *Playfield) isLineOccupied(y int) bool {
 }
 
 // Retorna a primeira linha ocupada
-func (p *Playfield) freeHeight() int {
+func (p *Playfield) FreeHeight() int {
 	var i int
 	for i = 0; i < p.height; i++ {
 		if p.isLineOccupied(i) {
@@ -194,6 +195,27 @@ func (p *Playfield) freeHeight() int {
 		}
 	}
 	return i
+}
+
+// Conta o número de buracos em um tabuleiro
+func (p *Playfield) Holes() int {
+	total_holes := 0
+	for y := 1; y < p.height; y++ {
+		for x := 0; x < p.width; x++ {
+			if p.at(x, y) == 0 && p.at(x, y-1) != 0 {
+				total_holes += 1
+			}
+		}
+	}
+	return total_holes
+}
+
+// Checa se o jogo foi perdido
+func (p *Playfield) lost() bool {
+	if p.FreeHeight() < 4 {
+		return true
+	}
+	return false
 }
 
 // Remove uma linha, criando uma nova linha vazia no topo, e fazendo cada linha acima da linha removida
@@ -212,7 +234,7 @@ func (p *Playfield) removeLine(y int) {
 }
 
 // Passa pelo tabuleiro removendo linhas completas
-func (p *Playfield) removeCompletedLines() int {
+func (p *Playfield) RemoveCompletedLines() int {
 	count := 0
 	for i := 0; i < p.height; i++ {
 		if p.isLineComplete(i) {
@@ -233,7 +255,7 @@ func (p *Playfield) set(x, y, v int) bool {
 }
 
 // Imprime o tabuleiro
-func (p *Playfield) print() {
+func (p *Playfield) Print() {
 	for i := 0; i < p.height; i++ {
 		fmt.Print("|")
 		for j := 0; j < p.width; j++ {
@@ -246,6 +268,7 @@ func (p *Playfield) print() {
 		}
 		fmt.Println("|")
 	}
+	fmt.Println("ClusterId:", p.GetClusterId())
 }
 
 // Coloca uma peca no tabuleiro
@@ -278,6 +301,19 @@ func (p *Piece) deepCopy() *Piece {
 	pi.pos.y = p.pos.y
 	pi.rot = p.rot
 	return &pi
+}
+
+func (p *Piece) Print() {
+	for x := 0; x < 4; x++ {
+		for y := 0; y < 4; y++ {
+			for _, pos := range p.tet.position[p.rot] {
+				if pos.x == x && pos.y == y {
+					print(1)
+				}
+			}
+		}
+		print("\n")
+	}
 }
 
 func (p *Piece) to_s() string {
@@ -386,10 +422,12 @@ func (pf *Playfield) bfs_frontier(piece *Piece, visited map[string]bool) []*Piec
 }
 
 // Joga uma partida de tetris dado uma semente aleatoria, as peças que participam da partida e uma política para escolha de peças
-func play(piece_code int, policy func(tabuleiros []*Playfield) (*Playfield, int)) (int, int) {
+func Play(piece_code int, policy func(tabuleiros []*Playfield) (*Playfield, int)) (int, int, []Playfield) {
 	playfield := NewPlayfield(StandardWidth, StandardHeight)
 	moves := 0
 	points := 0
+	var plays []Playfield
+	plays = append(plays, playfield)
 	for true {
 		piece := makeNewTet(piece_code)
 		piece.pos.x = (playfield.width / 2) - 2
@@ -399,52 +437,62 @@ func play(piece_code int, policy func(tabuleiros []*Playfield) (*Playfield, int)
 		}
 		p, score := policy(outcomes)
 		playfield = *p
+		plays = append(plays, playfield)
 		points += score
 		moves += 1
+		if p.lost() {
+			break
+		}
+
 	}
-	return moves, points
+	return moves, points, plays
 }
 
-func play_series(random_seed int64, piece_code, games int, policy func(tabuleiros []*Playfield) (*Playfield, int)) (float64, float64) {
+func Play_series(random_seed int64, piece_code, games int, policy func(tabuleiros []*Playfield) (*Playfield, int)) (float64, float64) {
 	var total_moves, total_points float64
-	chan_moves := make(chan float64, games)
-	chan_points := make(chan float64, games)
 	rand.Seed(random_seed)
 	for i := 0; i < games; i++ {
-		go func() {
-			moves, points := play(piece_code, policy)
-			chan_moves <- float64(moves)
-			chan_points <- float64(points)
-		}()
+		moves, points, _ := Play(piece_code, policy)
+		total_moves += float64(moves)
+		total_points += float64(points)
 	}
-	for i := 0; i < games; i++ {
-		total_moves += <-chan_moves
-		total_points += <-chan_points
-	}
+
 	return total_moves / float64(games), total_points / float64(games)
 }
 
-// A partir de um conjunto de tabuleiros, escolhe um aleatoriamente
-func random_policy(tabuleiros []*Playfield) (*Playfield, int) {
-	selected_play := tabuleiros[rand.Intn(len(tabuleiros))]
-	lines_removed := selected_play.removeCompletedLines()
-	return selected_play, lines_removed
-}
-
-func least_height_policy(tabuleiros []*Playfield) (*Playfield, int) {
-	selected_play := tabuleiros[0]
-	linhas := selected_play.removeCompletedLines()
-	height := selected_play.freeHeight()
-	for _, tabuleiro := range tabuleiros {
-		tmp_linhas := tabuleiro.removeCompletedLines()
-		tmp_height := tabuleiro.freeHeight()
-		if tmp_height > height || ((tmp_height == height) && (tmp_linhas > linhas)) {
-			selected_play = tabuleiro
-			linhas = tmp_linhas
-			height = tmp_height
+func (p *Playfield) QuadraticHeight() int {
+	var total float64
+	for i := 0; i < p.width; i++ {
+		for j := 0; j < p.height; j++ {
+			if p.at(i, j) != 0 {
+				total += math.Pow(float64(p.height-j), 2)
+			}
 		}
 	}
-	return selected_play, linhas
+	return int(total)
+}
+
+func (p *Playfield) quadraticHeight() int {
+	var total float64
+	for i := 0; i < p.width; i++ {
+		for j := 0; j < p.height; j++ {
+			if p.at(i, j) != 0 {
+				total += math.Pow(float64(p.height-j), 2)
+			}
+		}
+	}
+	return int(total)
+}
+
+func (p *Playfield) GetClusterId() string {
+	if p.ClusterId != "" {
+		return p.ClusterId
+	}
+	freeHeight := p.FreeHeight()
+	if freeHeight < 4 {
+		return "L"
+	}
+	return fmt.Sprintf("%v-%v", freeHeight, p.Holes())
 }
 
 // Converte uma quantidade de linhas em pontos
@@ -461,94 +509,4 @@ func points_from_lines(lines int) int {
 	}
 	fmt.Println("Scoring Error")
 	return 0
-}
-
-const StandardWidth int = 10
-const StandardHeight int = 20
-
-func main() {
-	politicas := make(map[string]func([]*Playfield) (*Playfield, int))
-	politicas["aleatoria"] = random_policy
-	politicas["menor_altura"] = least_height_policy
-
-	if len(os.Args) < 2 {
-		fmt.Println("Arquivo de entrada não encontrado")
-		os.Exit(1)
-	}
-
-	file, err := os.Open(os.Args[1])
-	if err != nil {
-		fmt.Println("Falha de leitura")
-		os.Exit(1)
-	}
-
-	var input string
-	_, err = fmt.Fscanln(file, &input)
-	if err != nil {
-		fmt.Println("Arquivo Vazio")
-		fmt.Println(err.Error())
-		os.Exit(1)
-	}
-	for true {
-		read, err := fmt.Fscanln(file, &input)
-		values := strings.Split(input, ",")
-		if read == 0 || err != nil {
-			break
-		}
-
-		if len(values) != 4 {
-			fmt.Println("Inputs errados")
-			fmt.Println(values)
-			os.Exit(1)
-		}
-		politica, ok := politicas[values[1]]
-		if !ok {
-			fmt.Println("Política Invalida")
-			os.Exit(1)
-		}
-		games, err := strconv.Atoi(values[0])
-		pieces, err := strconv.Atoi(values[2])
-		seed, err := strconv.Atoi(values[3])
-
-		fmt.Println(play_series(int64(seed), pieces, games, politica))
-	}
-	//moves, points := play(1, -1, least_height_policy)
-	//fmt.Println("Moves: ", moves, "Points: ", points)
-	os.Exit(0)
-	// var p Playfield = NewPlayfield(StandardWidth, StandardHeight)
-	// rand.Seed(time.Since(time.Date(1970, time.January, 0, 0, 0, 0, 0, time.UTC)).Nanoseconds())
-	// moves := 0
-	// points := 0
-	// var results []*Playfield
-	// for true {
-	// 	piece := makeNewTet(5)
-	// 	piece.pos.x = (p.width / 2) - 2
-	// 	results = p.bfs(piece)
-	// 	if len(results) <= 0 {
-	// 		break
-	// 	}
-	// 	p = *results[rand.Intn(len(results))]
-	// 	points += p.removeCompletedLines()
-	// 	moves++
-	// }
-	// p.print()
-	// fmt.Println(moves)
-	// fmt.Println(points)
-
-	// var p2 Playfield = NewPlayfield(StandardWidth, StandardHeight)
-	// piece := makeNewTet(3)
-	// results = p2.bfs(piece)
-	// for _, result := range results {
-	// 	result.print()
-	// 	fmt.Println()
-	// }
-	// fmt.Println(len(results))
-	//elapsed := time.Since(start)
-	//fmt.Printf("BFS took %s\n", elapsed)
-	//p.place(piece)
-	//p2.print()
-	//var video_info = sdl.GetVideoInfo()
-	//fmt.Println("----")
-	//p.removeLine(5)
-	//p.print()
 }
