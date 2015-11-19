@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"os"
 	"projeto_final/tetris"
+
 	//"time"
 )
 
@@ -65,10 +67,6 @@ func Least_height_quadratic(tabuleiros []*tetris.Playfield) (*tetris.Playfield, 
 // de como jogar baseado no aprendizado
 func Reinforcement_learning() func([]*tetris.Playfield) (*tetris.Playfield, int) {
 	return Learn()
-	// return func(tabuleiros []*tetris.Playfield) (*tetris.Playfield, int) {
-	// 	policy += 1
-	// 	return tabuleiros[0], 0
-	// }
 }
 
 // Learn retorna um mapa de Playfield clusterizados para seu valor
@@ -76,62 +74,96 @@ func Reinforcement_learning() func([]*tetris.Playfield) (*tetris.Playfield, int)
 // categoria e escolherá a que possui maior valor.
 func Learn() func([]*tetris.Playfield) (*tetris.Playfield, int) {
 	cluster_values := make(map[string]float64)
+	// O cluster que representa um jogo perdido tem valor predefinido de -100
 	cluster_values["L"] = -100.0
-	explore_chance := 0.5
-	taxa := 0.1
-	taxa_decay := 0.50
-	total_plays := 1000
-	policy_from_cluster_learning := func(tabuleiros []*tetris.Playfield) (*tetris.Playfield, int) {
-		var melhor_peso float64
-		melhor_peso = math.Inf(-1)
-		pontos := 0
-		if rand.Float64() < explore_chance { //vou explorar
-			tabuleiro_escolhido := tabuleiros[rand.Intn(len(tabuleiros))]
-			pontos := tabuleiro_escolhido.RemoveCompletedLines()
+
+	// Chance de se explorar enquanto estiver aprendendo
+	explore_chance := 0.75
+	// Decaimento da taxa de exploracao
+	var explore_decay float64
+	explore_decay = 0.999
+
+	// Porcentagem do valor de um único jogo que é incorporada ao valor
+	// presente de um cluster
+	taxa := 0.05
+
+	// Total de jogos que serão jogados
+	total_plays := 10000
+	policy_from_cluster_learning :=
+		func(tabuleiros []*tetris.Playfield) (*tetris.Playfield, int) {
+			var melhor_peso float64
+			melhor_peso = math.Inf(-1)
+			pontos := 0
+			// decide-se se vai explorar
+			if rand.Float64() < explore_chance {
+				// se sim, escolher um dos tabuleiros aleatoriamente
+				tabuleiro_escolhido := tabuleiros[rand.Intn(len(tabuleiros))]
+				pontos := tabuleiro_escolhido.RemoveCompletedLines()
+				return tabuleiro_escolhido, pontos
+			}
+			// se não for explorar, passa por cada tabuleiro e
+			// escolhe-se aquele que apresentar melhor valor de cluster
+			var tabuleiro_escolhido *tetris.Playfield
+			for _, tabuleiro := range tabuleiros {
+				p := tabuleiro.RemoveCompletedLines()
+				id := tabuleiro.GetClusterId()
+				tabuleiro.ClusterId = id
+				if cluster_values[id] > melhor_peso {
+					melhor_peso = cluster_values[id]
+					tabuleiro_escolhido = tabuleiro
+					pontos = p
+				}
+			}
 			return tabuleiro_escolhido, pontos
 		}
-		var tabuleiro_escolhido *tetris.Playfield
-		for _, tabuleiro := range tabuleiros {
-			p := tabuleiro.RemoveCompletedLines()
-			id := tabuleiro.GetClusterId()
-			tabuleiro.ClusterId = id
-			if cluster_values[id] > melhor_peso {
-				melhor_peso = cluster_values[id]
-				tabuleiro_escolhido = tabuleiro
-				pontos = p
-			}
-		}
-		return tabuleiro_escolhido, pontos
+
+	results, err := os.Create("resultados.csv")
+	if err != nil {
+		println("Nao consegui abrir arquivo")
+		return nil
 	}
-	for i := 0; i < total_plays; i++ {
-		//start := time.Now()
-		if i%100 == 0 {
+	var acc float64
+	var avg float64
+	acc = 0
+	fmt.Sprintf("jogo,movimentos")
+	for i := 1; i < total_plays+1; i++ {
+		if i%10 == 0 {
 			println(i)
+			avg = acc / 10.0
+			acc = 0
+			fmt.Println("Explore:", explore_chance)
+			fmt.Println("Media parcial:", avg)
+			fmt.Fprintf(results, "%v,%v\n", i, avg)
 		}
 		moves, _, plays := tetris.Play(-1, policy_from_cluster_learning)
-		var value float64
-		explore_chance *= 0.99
-		if moves > 500 {
-			value = 10
-		} else {
-			value = -10
+		acc += float64(moves)
+
+		// Value representa o valor do jogo, que será adicionado ao cluster
+		// que representa a última jogada e perpetuado para as jogadas anteriores
+		//var value float64
+		if explore_chance > 0.1 {
+			explore_chance *= explore_decay
 		}
-		taxa_var := taxa
-		for play_count := len(plays) - 1; play_count >= 0; play_count-- {
+
+		// O valor de um jogo é o seu número de pontos, dando um resultado negativo
+		// para qualquer jogo cujo resultado foi menos que 50 movimentos
+		value := (float64(moves) - avg/1.5)
+
+		// Atualiza o valor de cada cluster que participou do jogo
+		//println("Value:", value)
+		taxa_temp := taxa
+		for play_count := 0; play_count < len(plays)-1; play_count++ { //play_count := len(plays) - 1; play_count >= 0; play_count-- {
 			clusterId := plays[play_count].GetClusterId()
+			//fmt.Println("ClusterId:", clusterId)
 			peso_atual := cluster_values[clusterId]
-			cluster_values[clusterId] = (peso_atual * (1 - taxa_var)) + (value * taxa_var)
-			taxa_var *= taxa_decay
+			//fmt.Println("PesoAtual:", peso_atual)
+			cluster_values[clusterId] = (peso_atual * (1 - taxa_temp)) + (value * taxa_temp)
+			//fmt.Println("Novo valor:", cluster_values[clusterId])
+			value = cluster_values[clusterId]
+			taxa_temp *= taxa
 		}
-		//fmt.Println("Um jogo tomou:", time.Since(start))
 	}
 
-	// _, _, plays := tetris.Play(-1, policy_from_cluster)
-	// println("ClusterID:", plays[1].GetClusterId())
-	// cluster_values["21-1"] = -50
-	// cluster_values["22-2"] = -50
-	// _, _, plays = tetris.Play(-1, policy_from_cluster)
-	// println("ClusterID:", plays[1].GetClusterId())
 	println("Aprendi")
 	for key, value := range cluster_values {
 		fmt.Println("ClusterId: ", key, " Valor do Id: ", value)

@@ -14,10 +14,13 @@ type Tetromino struct {
 }
 
 type Playfield struct {
-	width  int
+	// Largura do tabuleiro
+	width int
+	// Altura do tabuleiro
 	height int
 	// Vetor representando o tabuleiro
-	field     []int
+	field []int
+	// Cluster no qual o tabuleiro se encaixa
 	ClusterId string
 }
 
@@ -435,6 +438,7 @@ func Play(piece_code int, policy func(tabuleiros []*Playfield) (*Playfield, int)
 		if len(outcomes) < 1 {
 			break
 		}
+
 		p, score := policy(outcomes)
 		playfield = *p
 		plays = append(plays, playfield)
